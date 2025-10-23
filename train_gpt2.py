@@ -7,6 +7,8 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 
+from nn import MLP
+
 batch_size = 64
 block_size = 256
 max_iters = 5000
@@ -31,3 +33,27 @@ class GPT(nn.Module):
 	def __init__(self, config):
 		super().__init__()
 		self.config = config
+		self.transformer = nn.ModuleDict(dict(
+  			wte = nn.Embedding(config.vocab_size, config.n_embd),
+  			wpe = nn.Embedding(config.block_size, config.n_embd),
+			h = nn.ModuleList([Block(config) for _ in range(config.n_layer)]),
+  			ln_f = nn.LayerNorm(config.n_embd)
+  		))
+		self.lm_head = nn.Linear(config.n_embd, config.vocab_size)
+
+class Block(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.ln1 = nn.LayerNorm(config.n_embd)
+        self.attn = MultiHeadAttention(config)
+        self.ln2 = nn.LayerNorm(config.n_embd)
+        self.mlp = MLP(config)
+        
+    def forward(self, x):
+        x = x + self.attn(self.ln1(x))
+        x = x + self.mlp(self.ln2(x))
+        return x
+
+class MultiHeadAttention(nn.Module):
+    def __init__(self, config):
+        super().__init__()
