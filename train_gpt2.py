@@ -40,6 +40,8 @@ class GPT(nn.Module):
   			ln_f = nn.LayerNorm(config.n_embd)
   		))
 		self.lm_head = nn.Linear(config.n_embd, config.vocab_size)
+    #def load_pretrained(self, ):
+        
 
 class Block(nn.Module):
     def __init__(self, config):
@@ -62,7 +64,6 @@ class MLP(nn.Module):
         self.gelu = nn.GELU(approximate='tanh')
         self.dropout = nn.Dropout(0.1)
     
-
     def forward(self, x):
         x = self.up(x)
         x = self.gelu(x)
@@ -73,30 +74,26 @@ class MultiHeadAttention(nn.Module):
     def __init__(self, config):
         super().__init__()
         assert config.n_embd % config.n_head == 0
-        # Bundle q, k, v, and output projection parameters together
-        # First 3*n_embd rows are qkv; last n_embd rows are the output projection
-        self.attn = nn.Linear(config.n_embd, 4 * config.n_embd)
+        self.w_qkv = nn.Linear(config.n_embd, 3 * config.n_embd)
+        self.w_o = nn.Linear(config.n_embd, config.n_embd)
         self.n_head = config.n_head
         self.d_head = config.n_embd // config.n_head
 
     def forward(self, x):
         B, T, C = x.size()
-        # use the first 3*C rows of the weight/bias for qkv projection
-        W_qkv = self.attn.weight[: 3 * C, :]
-        b_qkv = self.attn.bias[: 3 * C] if self.attn.bias is not None else None
-        qkv = F.linear(x, W_qkv, b_qkv).view(B, T, 3, self.n_head, self.d_head)
-        q, k, v = qkv.unbind(2)
-        # compute attention scores
-        attn = (q @ k.transpose(-2, -1)) * (self.d_head ** -0.5)
-        attn = attn.softmax(dim=-1)
-        # apply attention
-        out = (attn @ v).transpose(1, 2).contiguous().view(B, T, C)
-        # apply the output projection using the last C rows of the bundled weight/bias
-        W_o = self.attn.weight[3 * C : 4 * C, :]
-        b_o = self.attn.bias[3 * C : 4 * C] if self.attn.bias is not None else None
-        return F.linear(out, W_o, b_o)
-
-class 
+        
+        qkv = self.w_qkv(x)
+        # b_qkv = self.attn.bias[: 3 * C] if self.attn.bias is not None else None
+        q, k, v = qkv.split(self.n_embd, dim=2)
+        k = k.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
+        q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) 
+        v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
+        
+        #this just does EVERYTHIN (att matrix, multiplyin, softmax)
+        y = F.scaled_dot_product_attention(q, k, v, is_causal=True) 
+        
+        y = self.w_o(y)
+        return y
 
 
 
