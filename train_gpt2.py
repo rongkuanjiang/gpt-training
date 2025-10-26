@@ -23,9 +23,9 @@ dropout = 0.2
 
 @dataclass
 class GPTConfig:
-	vocab_size: int = 256
-	block_size: int = 65
-	n_embd: int = 6
+	vocab_size: int = 65
+	block_size: int = 256
+	n_embd: int = 384
 	n_head: int = 6
 	n_layer: int = 6
  
@@ -45,7 +45,7 @@ class Block(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.ln1 = nn.LayerNorm(config.n_embd)
-        self.attn = Attention(config)
+        self.attn = MultiHeadAttention(config)
         self.ln2 = nn.LayerNorm(config.n_embd)
         self.mlp = MLP(config)
         
@@ -57,18 +57,19 @@ class Block(nn.Module):
 class MLP(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.up_proj = nn.Linear(config.n_embd, 4 * config.n_embd)
-        self.down_proj = nn.Linear(4 * config.n_embd, config.n_embd)
-        self.act = nn.GELU()
+        self.up = nn.Linear(config.n_embd, 4 * config.n_embd)
+        self.down = nn.Linear(config.n_embd * 4, config.n_embd)
+        self.gelu = nn.GELU(approximate='tanh')
         self.dropout = nn.Dropout(0.1)
+    
 
     def forward(self, x):
-        x = self.fc1(x)
-        x = self.act(x)
-        x = self.fc2(x)
+        x = self.up(x)
+        x = self.gelu(x)
+        x = self.down(x)
         x = self.dropout(x)
         return x
-class Attention(nn.Module):
+class MultiHeadAttention(nn.Module):
     def __init__(self, config):
         super().__init__()
         assert config.n_embd % config.n_head == 0
@@ -94,4 +95,11 @@ class Attention(nn.Module):
         W_o = self.attn.weight[3 * C : 4 * C, :]
         b_o = self.attn.bias[3 * C : 4 * C] if self.attn.bias is not None else None
         return F.linear(out, W_o, b_o)
+
+class 
+
+
+
+
+
 
