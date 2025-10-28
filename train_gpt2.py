@@ -211,21 +211,41 @@ model.eval()
 model.to(device)
 enc = tiktoken.get_encoding('gpt2')
 
-with open('input.txt', 'r') as f:
-    text = f.read()
-text = text[:1000]
-tokens = enc.encode(text)
-B, T = 4, 32
-buf = torch.tensor(tokens[:B*T+1])
-x = buf[:-1].view(B, T)
-y = buf[1:].view(B, T)
 
-x, y = x.to(device), y.to(device)
-
-logits, loss = model(x, y) 
-
-print(loss) #got 10.95, which -log(1/50257) is 10.82 so its roughly the same so the randomly initialized weights should be a good starting point
-import sys; sys.exit(0)
+class DataLoaderLite:
+    def __init__(self, B, T):
+        self.B = B
+        self.T = T
+        with open('input.txt', 'r') as f:
+            text = f.read()
+        tokens = torch.tensor(enc.encode(text))
+        self.tokens = tokens
+        print(f"loaded {len(self.tokens)} tokens")
+        print(f"1 epoch = {len(self.tokens) // (B * T)} batches")
+        self.current_position = 0
+    
+    def next_batch(self):
+        B = self.B
+        T = self.T
+        buf = self.tokens[self.current_position : self.current_position + B*T+1]
+        x = buf[:-1].view(B, T)
+        y = buf[1:].view(B, T)
+        self.current_position += B*T
+        
+        if self.current_position + (B*T+1) > len(self.tokens):
+            self.current_position = 0
+        
+        return x, y
+        
+train_loader = DataLoaderLite(B=4, T=32)
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4)
-
+for i in range(50):
+    x, y = train_loader.next_batch()
+    x, y = x.to(device), y.to(device)
+    optimizer.zero_grad()
+    logits, loss = model(x, y)
+    loss.backward()
+    optimizer.step()
+    print(f"step {i}, loss: {loss.item()}")
+import sys; sys.exit(0)
