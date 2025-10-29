@@ -193,7 +193,7 @@ max_length = 30
 
 
 # model.eval()
-# model.to(device)
+model.to(device)
 enc = tiktoken.get_encoding('gpt2')
 
 
