@@ -9,32 +9,6 @@ import torch.nn as nn
 from torch.nn import functional as F
 import tiktoken
 
-
-# sections:
-# 1. class definitions (transformer architecture)
-#   1.1 GPT class defines a transformer, it uses all other classes
-#       1.1.1 init method 
-#       1.1.2 forward method
-#       1.1.3 load pretrained weights method (used in init, used only for testing)
-#   1.2 GPTConfig class sets hyperparameters 
-#   1.3 Block is the main component of a transformer. composed of attention and MLP blocks
-#   1.4 DataLoader
-#       1.4.1 tokenizing data
-    #       1.4.1.1 loading tokenizer
-    #       1.4.1.2 loading data
-    #       1.4.1.3 encoding data
-    #   1.4.2 splitting data
-# 2. configuring training device
-# 3. initializing model
-# 5. training loop
-#   5.1 init data loader
-#   5.2 optimizer
-#       5.2.1 get batch and send model to device
-#       5.2.2 reset gradients
-#       5.2.3 get logits and loss
-#       5.2.4 backpropagation
-#       5.2.5 adjust weights (AdamW)
-
 class CausalSelfAttention(nn.Module):
 
     def __init__(self, config):
@@ -214,12 +188,13 @@ model = GPT(GPTConfig()) # generates random weights
 print('yo')
 model.train()
 
-# num_return_sequences = 5
-# max_length = 30
+num_return_sequences = 5
+max_length = 30
+
 
 # model.eval()
 # model.to(device)
-# enc = tiktoken.get_encoding('gpt2')
+enc = tiktoken.get_encoding('gpt2')
 
 
 class DataLoaderLite:
@@ -259,3 +234,27 @@ for i in range(50):
     optimizer.step()
     print(f"step {i}, loss: {loss.item()}")
 # import sys; sys.exit(0)
+
+tokens = enc.encode("Behold, ")
+tokens = torch.tensor(tokens, dtype=torch.long)
+tokens = tokens.unsqueeze(0).repeat(num_return_sequences, 1)
+x = tokens.to(device)
+
+torch.manual_seed(42)
+
+while x.size(1) < max_length:
+    with torch.no_grad():
+        logits, _ = model(x)
+        logits = logits[:, -1, :]
+        probs = F.softmax(logits, dim=-1)
+        topk_probs, topk_indices = torch.topk(probs, 50, dim=-1)
+        ix = torch.multinomial(topk_probs, 1)
+        xcol = torch.gather(topk_indices, -1, ix)
+        x = torch.cat((x, xcol), dim=1)
+
+
+for i in range(num_return_sequences):
+    tokens = x[i, :max_length].tolist()
+    print(tokens)
+    decoded = enc.decode(tokens)
+    print(">", decoded)
