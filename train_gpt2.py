@@ -18,14 +18,23 @@ import tiktoken
 #       1.1.3 load pretrained weights method (used in init, used only for testing)
 #   1.2 GPTConfig class sets hyperparameters 
 #   1.3 Block is the main component of a transformer. composed of attention and MLP blocks
+#   1.4 DataLoader
+#       1.4.1 tokenizing data
+    #       1.4.1.1 loading tokenizer
+    #       1.4.1.2 loading data
+    #       1.4.1.3 encoding data
+    #   1.4.2 splitting data
 # 2. configuring training device
-# 3. preparing data
-#   3.1 tokenizing data
-#       3.1.1 loading tokenizer
-#       3.1.2 loading data
-#       3.1.3 encoding data
-#   3.2 splitting data
-# 4. initializing model (one line)
+# 3. initializing model
+# 5. training loop
+#   5.1 init data loader
+#   5.2 optimizer
+#       5.2.1 get batch and send model to device
+#       5.2.2 reset gradients
+#       5.2.3 get logits and loss
+#       5.2.4 backpropagation
+#       5.2.5 adjust weights (AdamW)
+
 class CausalSelfAttention(nn.Module):
 
     def __init__(self, config):
@@ -203,13 +212,14 @@ print(f"using device: {device}")
 #model = GPT.from_pretrained('gpt2')
 model = GPT(GPTConfig()) # generates random weights
 print('yo')
+model.train()
 
-num_return_sequences = 5
-max_length = 30
+# num_return_sequences = 5
+# max_length = 30
 
-model.eval()
-model.to(device)
-enc = tiktoken.get_encoding('gpt2')
+# model.eval()
+# model.to(device)
+# enc = tiktoken.get_encoding('gpt2')
 
 
 class DataLoaderLite:
@@ -248,4 +258,4 @@ for i in range(50):
     loss.backward()
     optimizer.step()
     print(f"step {i}, loss: {loss.item()}")
-import sys; sys.exit(0)
+# import sys; sys.exit(0)
