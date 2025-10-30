@@ -189,8 +189,7 @@ model.to(device)
 model.train()
 model = torch.compile(model)
 
-num_return_sequences = 5
-max_length = 30
+
 print('model on:', next(model.parameters()).device)  # should say cuda:0
 
 
@@ -265,6 +264,8 @@ for step in range(max_steps):
     
 # import sys; sys.exit(0)
 
+# num_return_sequences = 5
+# max_length = 30
 # tokens = enc.encode("Behold, ")
 # tokens = torch.tensor(tokens, dtype=torch.long)
 # tokens = tokens.unsqueeze(0).repeat(num_return_sequences, 1)
