@@ -184,7 +184,7 @@ elif hasattr(torch.backends, 'mps') and torch.mps.is_available():
     device = 'mps'
 print(f"using device: {device}")
 #model = GPT.from_pretrained('gpt2')
-model = GPT(GPTConfig()) # generates random weights
+model = GPT(GPTConfig(vocab_size=50304)) # generates random weights
 model.to(device)
 model.train()
 model = torch.compile(model)
