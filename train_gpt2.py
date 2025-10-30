@@ -223,7 +223,7 @@ class DataLoaderLite:
         
         return x, y
         
-train_loader = DataLoaderLite(B=16, T=1024)
+train_loader = DataLoaderLite(B=2, T=256)
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4)
 for i in range(50):
@@ -237,7 +237,9 @@ for i in range(50):
     torch.cuda.synchronize()
     t1 = time.time()
     dt = (t1 - t0)*1000
-    print(f"step {i}, time: {dt}ms, loss: {loss.item()}")
+    tps = (train_loader.B * train_loader.T) // (t1 - t0)
+    print(f"step {i}, time: {dt}ms, loss: {loss.item()}, tps: {tps}tokens/s")
+    
 # import sys; sys.exit(0)
 
 # tokens = enc.encode("Behold, ")
