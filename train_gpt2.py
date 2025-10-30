@@ -198,7 +198,20 @@ print('model on:', next(model.parameters()).device)  # should say cuda:0
 
 enc = tiktoken.get_encoding('gpt2')
 
+max_lr = 6e-4
+min_lr = 0.1 * max_lr
+warmup_steps = 10
 
+
+def get_lr(it):
+    if it < warmup_steps:
+        return max_lr * (it+1) / warmup_steps
+    if it > max_steps:
+        return min_lr
+    decay_ratio = (it-warmup_steps) / (max_steps - warmup_steps)
+    assert 0 <= decay_ratio <= 1
+    coeff = 0.5 * (1.0 * math.cos(math.pi * decay_ratio))
+    return min_lr + coeff * (max_lr - min_lr)
 class DataLoaderLite:
     def __init__(self, B, T):
         self.B = B
@@ -225,9 +238,9 @@ class DataLoaderLite:
         return x, y
         
 train_loader = DataLoaderLite(B=16, T=1024)
-
-optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4)
-for i in range(50):
+max_steps = 50
+optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4, betas=(0.9, 0.95))
+for step in range(max_steps):
     t0 = time.time()
     x, y = train_loader.next_batch()
     x, y = x.to(device), y.to(device)
@@ -235,12 +248,19 @@ for i in range(50):
     with torch.autocast(device_type=device, dtype=torch.bfloat16):
         logits, loss = model(x, y)
     loss.backward()
+    norm = torch.nn.utils.clip_grad_norm(model.parameters(), 1.0)
+    
+    lr = get_lr(step)
+    for param_group in optimizer.param_groups():
+        param_group['lr'] = lr
+    
     optimizer.step()
-    torch.cuda.synchronize()
+    if device == 'cuda':
+        torch.cuda.synchronize()
     t1 = time.time()
     dt = (t1 - t0)*1000
     tps = int((train_loader.B * train_loader.T) // (t1 - t0))
-    print(f"step {i}, time: {dt}ms, loss: {loss.item()}, tps: {tps} tokens/s")
+    print(f"step {step:4d}, time: {dt:.2f}ms, lr: {lr}, loss: {loss.item():.6f}, tok/s: {tps}")
     
 # import sys; sys.exit(0)
 
@@ -251,8 +271,9 @@ for i in range(50):
 
 # torch.manual_seed(42)
 
+# model.eval()
 # while x.size(1) < max_length:
-#     with torch.no_grad():
+#       torch.no_grad():
 #         logits, _ = model(x)
 #         logits = logits[:, -1, :]
 #         probs = F.softmax(logits, dim=-1)
