@@ -224,7 +224,7 @@ class DataLoaderLite:
         
         return x, y
         
-train_loader = DataLoaderLite(B=2, T=256)
+train_loader = DataLoaderLite(B=16, T=1024)
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4)
 for i in range(50):
