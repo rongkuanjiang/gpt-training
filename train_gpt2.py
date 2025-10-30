@@ -260,7 +260,7 @@ for step in range(max_steps):
     t1 = time.time()
     dt = (t1 - t0)*1000
     tps = int((train_loader.B * train_loader.T) // (t1 - t0))
-    print(f"step {step:4d}, time: {dt:.2f}ms, lr: {lr}, loss: {loss.item():.6f}, tok/s: {tps}")
+    print(f"step {step:4d}, time: {dt:.2f}ms, lr: {lr:.4e}, loss: {loss.item():.6f}, tok/s: {tps}")
     
 # import sys; sys.exit(0)
 
