@@ -210,7 +210,7 @@ def get_lr(it):
         return min_lr
     decay_ratio = (it-warmup_steps) / (max_steps - warmup_steps)
     assert 0 <= decay_ratio <= 1
-    coeff = 0.5 * (1.0 * math.cos(math.pi * decay_ratio))
+    coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio))
     return min_lr + coeff * (max_lr - min_lr)
 class DataLoaderLite:
     def __init__(self, B, T):
@@ -238,7 +238,9 @@ class DataLoaderLite:
         return x, y
         
 train_loader = DataLoaderLite(B=16, T=1024)
-max_steps = 50
+
+
+
 optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4, betas=(0.9, 0.95))
 for step in range(max_steps):
     t0 = time.time()
