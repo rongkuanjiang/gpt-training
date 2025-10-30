@@ -187,6 +187,7 @@ print(f"using device: {device}")
 model = GPT(GPTConfig()) # generates random weights
 model.to(device)
 model.train()
+model = torch.compile(model)
 
 num_return_sequences = 5
 max_length = 30
@@ -231,14 +232,15 @@ for i in range(50):
     x, y = train_loader.next_batch()
     x, y = x.to(device), y.to(device)
     optimizer.zero_grad()
-    logits, loss = model(x, y)
+    with torch.autocast(device_type=device, dtype=torch.bfloat16):
+        logits, loss = model(x, y)
     loss.backward()
     optimizer.step()
     torch.cuda.synchronize()
     t1 = time.time()
     dt = (t1 - t0)*1000
-    tps = (train_loader.B * train_loader.T) // (t1 - t0)
-    print(f"step {i}, time: {dt}ms, loss: {loss.item()}, tps: {tps}tokens/s")
+    tps = int((train_loader.B * train_loader.T) // (t1 - t0))
+    print(f"step {i}, time: {dt}ms, loss: {loss.item()}, tps: {tps} tokens/s")
     
 # import sys; sys.exit(0)
 
