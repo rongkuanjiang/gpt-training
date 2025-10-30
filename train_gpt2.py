@@ -251,7 +251,7 @@ for step in range(max_steps):
     norm = torch.nn.utils.clip_grad_norm(model.parameters(), 1.0)
     
     lr = get_lr(step)
-    for param_group in optimizer.param_groups():
+    for param_group in optimizer.param_groups:
         param_group['lr'] = lr
     
     optimizer.step()
