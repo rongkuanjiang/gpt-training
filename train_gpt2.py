@@ -201,6 +201,7 @@ enc = tiktoken.get_encoding('gpt2')
 max_lr = 6e-4
 min_lr = 0.1 * max_lr
 warmup_steps = 10
+max_steps = 50
 
 
 def get_lr(it):
