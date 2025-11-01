@@ -1,6 +1,5 @@
-torch
 tiktoken
 datasets
 numpy
 tqdm
-hellaswag
+transformers
