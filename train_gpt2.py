@@ -9,6 +9,8 @@ import torch.nn as nn
 from torch.nn import functional as F
 import tiktoken
 import numpy as np
+from hellaswag import render_example, iterate_examples
+
 
 class CausalSelfAttention(nn.Module):
 
@@ -232,7 +234,10 @@ else:
 
 device_type = "cuda" if device.startswith("cuda") else "cpu"
 torch.manual_seed(1337)
-if torch.cuda.is_available():
+if device_type == 'cuda':
+    torch.backends.cuda.enable_flash_sdp(False)
+    torch.backends.cuda.enable_mem_efficient_sdp(True)
+    torch.backends.cuda.enable_math_sdp(True)
     torch.cuda.manual_seed(1337)
 
 #model = GPT.from_pretrained('gpt2')
@@ -315,6 +320,7 @@ def get_most_likely_row(tokens, mask, logits):
 total_batch_size = 524288
 B = 64
 T = 1024
+assert total_batch_size % (B * T * ddp_world_size) == 0
 grad_accum_steps = total_batch_size // (B * T * ddp_world_size)
 if master_process:
     print(f"total desired batch size: {total_batch_size}")
@@ -326,18 +332,23 @@ enc = tiktoken.get_encoding('gpt2')
 train_loader = DataLoaderLite(B=B, T=T, process_rank=ddp_rank, num_processes=ddp_world_size, split="train")
 val_loader = DataLoaderLite(B=B, T=T, process_rank=ddp_rank, num_processes=ddp_world_size, split="val")
 
+torch.set_float32_matmul_precision('high')
 
 #initialize model
 model = GPT(GPTConfig(vocab_size=50304)) # generates random weights
 
 model.to(device)
-use_compile = False # torch.compile interferes with HellaSwag eval and Generation. TODO fix
-if use_compile:
-    model = torch.compile(model)
+# use_compile = False # torch.compile interferes with HellaSwag eval and Generation. TODO fix
+# if use_compile:
+#     model = torch.compile(model)
+model = torch.compile(model)
 
 if ddp:
-    model = DDP(model, device_ids=[ddp_local_rank])
+    model = DDP(model, device_ids=[ddp_local_rank], static_graph=True)
 raw_model = model.module if ddp else model
+
+raw_eager = GPT(GPTConfig(vocab_size=50304)).to(device)
+raw_eager.load_state_dict(raw_model.state_dict(), strict=False)
 
 
 max_lr = 6e-4
@@ -372,7 +383,8 @@ for step in range(max_steps):
 
 
     if step % 250 == 0 or last_step:
-        model.eval()
+        raw_eager.load_state_dict(raw_model.state_dict(), strict=False)
+        raw_eager.eval()
         val_loader.reset()
         with torch.no_grad():
             val_loss_accum = 0.0
@@ -381,7 +393,7 @@ for step in range(max_steps):
                 x, y = val_loader.next_batch()
                 x, y = x.to(device), y.to(device)
                 with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
-                    logits, loss = model(x, y)
+                    logits, loss = raw_eager(x, y)
                 loss = loss / val_loss_steps
                 val_loss_accum += loss.detach()
         if ddp:
@@ -404,7 +416,9 @@ for step in range(max_steps):
                 torch.save(checkpoint, checkpoint_path)
 
     # once in a while evaluate hellaswag
-    if (step % 250 == 0 or last_step) and (not use_compile):
+    if (step % 250 == 0 or last_step):
+        raw_eager.load_state_dict(raw_model.state_dict(), strict=False)
+        raw_eager.eval()
         num_correct_norm = 0
         num_total = 0
         for i, example in enumerate(iterate_examples("val")):
@@ -418,7 +432,7 @@ for step in range(max_steps):
             # get the logits
             with torch.no_grad():
                 with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
-                    logits, loss = model(tokens)
+                    logits, loss = raw_eager(tokens)
                 pred_norm = get_most_likely_row(tokens, mask, logits)
             num_total += 1
             num_correct_norm += int(pred_norm == label)
@@ -437,8 +451,9 @@ for step in range(max_steps):
                 f.write(f"{step} hella {acc_norm:.4f}\n")
 
     # once in a while generate from the model (except step 0, which is noise)
-    if ((step > 0 and step % 250 == 0) or last_step) and (not use_compile):
-        model.eval()
+    if ((step > 0 and step % 250 == 0) or last_step):
+        raw_eager.load_state_dict(raw_model.state_dict(), strict=False)
+        raw_eager.eval()
         num_return_sequences = 4
         max_length = 32
         tokens = enc.encode("Hello, I'm a language model,")
@@ -451,7 +466,7 @@ for step in range(max_steps):
             # forward the model to get the logits
             with torch.no_grad():
                 with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
-                    logits, loss = model(xgen) # (B, T, vocab_size)
+                    logits, loss = raw_eager(xgen) # (B, T, vocab_size)
                 # take the logits at the last position
                 logits = logits[:, -1, :] # (B, vocab_size)
                 # get the probabilities
@@ -492,7 +507,7 @@ for step in range(max_steps):
         loss.backward()
     if ddp:
         dist.all_reduce(loss_accum, op=dist.ReduceOp.AVG)
-    norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+    norm = torch.nn.utils.clip_grad_norm_(raw_model.parameters(), 1.0)
     
     lr = get_lr(step)
     for param_group in optimizer.param_groups:
@@ -508,7 +523,7 @@ for step in range(max_steps):
     if master_process:
         print(f"step {step:4d}, dt: {dt*1000:.2f}ms, lr: {lr:.4e}, norm: {norm:.4f}, loss: {loss_accum.item():.6f}, tok/s: {tps:.2f}")
         
-torch.save(model.state_dict(), 'model.pth')
+torch.save(raw_model.state_dict(), 'model.pth')
 
 if ddp:
     destroy_process_group()
