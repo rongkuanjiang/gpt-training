@@ -3,5 +3,4 @@ tiktoken
 datasets
 numpy
 tqdm
-multiprocessing
 hellaswag
