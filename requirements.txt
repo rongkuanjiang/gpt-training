@@ -1,4 +1,7 @@
 torch
-transformers
 dataclasses
 tiktoken
+datasets
+numpy
+tqdm
+multiprocessing

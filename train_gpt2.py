@@ -8,6 +8,7 @@ import transformers
 import torch.nn as nn
 from torch.nn import functional as F
 import tiktoken
+import numpy as np
 
 class CausalSelfAttention(nn.Module):
 
@@ -173,34 +174,156 @@ class GPT(nn.Module):
                     sd[k].copy_(sd_hf[k])
 
         return model
+    
+    def configure_optimizers(self, weight_decay, learning_rate, device_type):
+        param_dict = {pn: p for pn, p in self.named_parameters()}
+        param_dict = {pn: p for pn, p in param_dict.items() if p.requires_grad}
+        # create optim groups. Any parameters that is 2D will be weight decayed, otherwise no.
+        # i.e. all weight tensors in matmuls + embeddings decay, all biases and layernorms don't.
+        decay_params = [p for n, p in param_dict.items() if p.dim() >= 2]
+        nodecay_params = [p for n, p in param_dict.items() if p.dim() < 2]
+        optim_groups = [
+            {'params': decay_params, 'weight_decay': weight_decay},
+            {'params': nodecay_params, 'weight_decay': 0.0}
+        ]
+        num_decay_params = sum(p.numel() for p in decay_params)
+        num_nodecay_params = sum(p.numel() for p in nodecay_params)
+        if master_process:
+            print(f"num decayed parameter tensors: {len(decay_params)}, with {num_decay_params:,} parameters")
+            print(f"num non-decayed parameter tensors: {len(nodecay_params)}, with {num_nodecay_params:,} parameters")
+        # Create AdamW optimizer and use the fused version if it is available
+        fused_available = 'fused' in inspect.signature(torch.optim.AdamW).parameters
+        use_fused = fused_available and device_type == "cuda"
+        if master_process:
+            print(f"using fused AdamW: {use_fused}")
+        optimizer = torch.optim.AdamW(optim_groups, lr=learning_rate, betas=(0.9, 0.95), eps=1e-8, fused=use_fused)
+        return optimizer
+
+# run the training loop
+from torch.distributed import init_process_group, destroy_process_group
+from torch.nn.parallel import DistributedDataParallel as DDP
+import torch.distributed as dist
+
+ddp = int(os.environ.get('RANK', -1)) != -1 
+if ddp:
+    # use of DDP atm demands CUDA, we set the device appropriately according to rank
+    assert torch.cuda.is_available(), "for now i think we need CUDA for DDP"
+    init_process_group(backend='nccl')
+    ddp_rank = int(os.environ['RANK'])
+    ddp_local_rank = int(os.environ['LOCAL_RANK'])
+    ddp_world_size = int(os.environ['WORLD_SIZE'])
+    device = f'cuda:{ddp_local_rank}'
+    torch.cuda.set_device(device)
+    master_process = ddp_rank == 0 # this process will do logging, checkpointing etc.
+else:
+    # vanilla, non-DDP run
+    ddp_rank = 0
+    ddp_local_rank = 0
+    ddp_world_size = 1
+    master_process = True
+    # attempt to autodetect device
+    device = "cpu"
+    if torch.cuda.is_available():
+        device = "cuda"
+    elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        device = "mps"
+    print(f"using device: {device}")
 
 
-# set device
-device = 'cpu'
- 
+device_type = "cuda" if device.startswith("cuda") else "cpu"
+torch.manual_seed(1337)
 if torch.cuda.is_available():
-    device = 'cuda'
-elif hasattr(torch.backends, 'mps') and torch.mps.is_available():
-    device = 'mps'
-print(f"using device: {device}")
+    torch.cuda.manual_seed(1337)
+
 #model = GPT.from_pretrained('gpt2')
+# model.eval()
+class DataLoaderLite:
+    def __init__(self, B, T, process_rank, num_processes, split):
+        self.B = B
+        self.T = T
+        self.process_rank = process_rank
+        self.num_processes = num_processes
+        
+        # with open('input.txt', 'r') as f:
+        #     text = f.read()
+            
+        # tokens = torch.tensor(enc.encode(text))
+        
+        data_root = "edu_fineweb10B"
+        shards = os.listdir(data_root)
+        shards = [s for s in shards if split in s]
+        shards = sorted(shards)
+        shards = [os.path.join(data_root, s) for s in shards]
+        self.shards = shards
+        assert len(shards) > 0, f"no shards found for split {split}"
+        if master_process:
+            print(f"found {len(shards)} shards for split {split}")
+        self.reset()
+        
+        # self.tokens = tokens
+        # print(f"loaded {len(self.tokens)} tokens")
+        # print(f"1 epoch = {len(self.tokens) // (B * T)} batches")
+        # self.current_position = 0
+    
+    def reset(self):
+        # state, init at shard zero
+        self.current_shard = 0
+        self.tokens = self.load_tokens(self.shards[self.current_shard])
+        self.current_position = self.B * self.T * self.process_rank
+    
+    def next_batch(self):
+        B = self.B
+        T = self.T
+        buf = self.tokens[self.current_position : self.current_position + B*T+1]
+        x = (buf[:-1]).view(B, T)
+        y = (buf[1:]).view(B, T)
+        self.current_position += B*T*self.num_processes
+        
+        if self.current_position + (B*T*self.num_process+1) > len(self.tokens):
+            self.current_shard = (self.current_shard + 1) % len(self.shards)
+            self.tokens = self.load_tokens(self.shards[self.current_shard])
+            self.current_position = B * T * self.process_rank
+        return x, y
+    
+
+    def load_tokens(self, filename):
+        npt = np.load(filename)
+        npt = npt.astype(np.int32) # added after video
+        ptt = torch.tensor(npt, dtype=torch.long)
+        return ptt
+
+total_batch_size = 524288
+B = 64
+T = 1024
+grad_accum_steps = total_batch_size // (B * T * ddp_world_size)
+if master_process:
+    print(f"total desired batch size: {total_batch_size}")
+    print(f"=> calculated gradient accumulation steps: {grad_accum_steps}")
+    
+    
+enc = tiktoken.get_encoding('gpt2')
+
+train_loader = DataLoaderLite(B=B, T=T, process_rank=ddp_rank, num_processes=ddp_world_size, split="train")
+val_loader = DataLoaderLite(B=B, T=T, process_rank=ddp_rank, num_processes=ddp_world_size, split="val")
+
+
+#initialize model
 model = GPT(GPTConfig(vocab_size=50304)) # generates random weights
+
 model.to(device)
-model.train()
+
 model = torch.compile(model)
 
-
 print('model on:', next(model.parameters()).device)  # should say cuda:0
+if ddp:
+    model = DDP(model, device_ids=[ddp_local_rank])
+raw_model = model.module if ddp else model
 
-
-# model.eval()
-
-enc = tiktoken.get_encoding('gpt2')
 
 max_lr = 6e-4
 min_lr = 0.1 * max_lr
-warmup_steps = 10
-max_steps = 50
+warmup_steps = 715
+max_steps = 19073
 
 
 def get_lr(it):
@@ -212,58 +335,51 @@ def get_lr(it):
     assert 0 <= decay_ratio <= 1
     coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio))
     return min_lr + coeff * (max_lr - min_lr)
-class DataLoaderLite:
-    def __init__(self, B, T):
-        self.B = B
-        self.T = T
-        with open('input.txt', 'r') as f:
-            text = f.read()
-        tokens = torch.tensor(enc.encode(text))
-        self.tokens = tokens
-        print(f"loaded {len(self.tokens)} tokens")
-        print(f"1 epoch = {len(self.tokens) // (B * T)} batches")
-        self.current_position = 0
-    
-    def next_batch(self):
-        B = self.B
-        T = self.T
-        buf = self.tokens[self.current_position : self.current_position + B*T+1]
-        x = buf[:-1].view(B, T)
-        y = buf[1:].view(B, T)
-        self.current_position += B*T
-        
-        if self.current_position + (B*T+1) > len(self.tokens):
-            self.current_position = 0
-        
-        return x, y
-        
-train_loader = DataLoaderLite(B=16, T=1024)
+# optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4, betas=(0.9, 0.95))
+optimizer = raw_model.configure_optimizers(weight_decay=0.1, learning_rate=6e-4, device_type=device_type)
 
-
-
-optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4, betas=(0.9, 0.95))
 for step in range(max_steps):
     t0 = time.time()
-    x, y = train_loader.next_batch()
-    x, y = x.to(device), y.to(device)
+    model.train()
+
     optimizer.zero_grad()
-    with torch.autocast(device_type=device, dtype=torch.bfloat16):
-        logits, loss = model(x, y)
-    loss.backward()
-    norm = torch.nn.utils.clip_grad_norm(model.parameters(), 1.0)
+    loss_accum = 0.0
+
+    for micro_step in range(grad_accum_steps):
+        x, y = train_loader.next_batch()
+        x, y = x.to(device), y.to(device)
+        if ddp:
+            model.require_backward_grad_sync = (micro_step == grad_accum_steps - 1)
+       
+        with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
+            logits, loss = model(x, y)
+            
+        
+        loss = loss / grad_accum_steps
+        loss_accum += loss.detach()
+        loss.backward()
+        if ddp:
+            dist.all_reduce(loss_accum, op=dist.ReduceOp.AVG)
+    norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
     
     lr = get_lr(step)
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
     
     optimizer.step()
-    if device == 'cuda':
+    if device_type == 'cuda':
         torch.cuda.synchronize()
     t1 = time.time()
-    dt = (t1 - t0)*1000
-    tps = int((train_loader.B * train_loader.T) // (t1 - t0))
-    print(f"step {step:4d}, time: {dt:.2f}ms, lr: {lr:.4e}, loss: {loss.item():.6f}, tok/s: {tps}")
-    
+    dt = t1 - t0
+    tokens_processed = train_loader.B * train_loader.T * grad_accum_steps * ddp_world_size
+    tps = tokens_processed / dt
+    if master_process:
+        print(f"step {step:4d}, dt: {dt*1000:.2f}ms, lr: {lr:.4e}, norm: {norm:.4f}, loss: {loss_accum.item():.6f}, tok/s: {tps:.2f}")
+        
+torch.save(model.state_dict(), 'model.pth')
+
+if ddp:
+    destroy_process_group()
 # import sys; sys.exit(0)
 
 # num_return_sequences = 5
