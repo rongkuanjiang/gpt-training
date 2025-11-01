@@ -33,7 +33,7 @@ from tqdm import tqdm
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
-from transformers import GPT2LMHeadModel
+from transformers.models.gpt2.modeling_gpt2 import GPT2LMHeadModel
 
 # -----------------------------------------------------------------------------
 DATA_CACHE_DIR = os.path.join(os.path.dirname(__file__), "hellaswag")

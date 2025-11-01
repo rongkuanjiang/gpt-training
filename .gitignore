@@ -1,0 +1,17 @@
+edu_fineweb10B/
+data/
+cache/
+*.jsonl
+*.npz
+*.npy
+# checkpoints and large artifacts
+*.pt
+*.bin
+*.safetensors
+log/*.pt
+checkpoints/
+log/
+*.pt
+*.bin
+*.safetensors
+edu_fineweb10B/
