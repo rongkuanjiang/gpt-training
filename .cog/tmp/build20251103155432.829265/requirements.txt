@@ -1,5 +1,6 @@
 --extra-index-url https://download.pytorch.org/whl/cu121
-torch==2.4.1+cu121
+--extra-index-url https://download.pytorch.org/whl/cu121
+torch==2.4.1
 tiktoken==0.7.0
 datasets==3.0.0
 numpy==1.26.4

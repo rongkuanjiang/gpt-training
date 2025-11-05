@@ -15,3 +15,6 @@ log/
 *.bin
 *.safetensors
 edu_fineweb10B/
+weights/
+*.pth
+old_code/
