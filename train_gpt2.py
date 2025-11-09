@@ -50,6 +50,7 @@ class MLP(nn.Module):
         self.gelu    = nn.GELU(approximate='tanh')
         self.c_proj  = nn.Linear(4 * config.n_embd, config.n_embd)
         self.c_proj.NANOGPT_SCALE_INIT = 1
+
     def forward(self, x):
         x = self.c_fc(x)
         x = self.gelu(x)
@@ -128,7 +129,7 @@ class DataLoaderLite:
 @dataclass
 class GPTConfig:
     block_size: int = 1024 # max sequence length
-    vocab_size: int = 50257 # number of tokens: 50,000 BPE merges + 256 bytes tokens + 1 <|endoftext|> token
+    vocab_size: int = 50304 # number of tokens: 50,000 BPE merges + 256 bytes tokens + 1 <|endoftext|> token
     n_layer: int = 12 # number of layers
     n_head: int = 12 # number of heads
     n_embd: int = 768 # embedding dimension
@@ -257,7 +258,6 @@ class GPT(nn.Module):
 
     
 def main():
-    
     import transformers
     from hellaswag import render_example, iterate_examples
 
@@ -501,6 +501,7 @@ def main():
         for micro_step in range(grad_accum_steps):
             x, y = train_loader.next_batch()
             x, y = x.to(device), y.to(device)
+            
             if ddp:
                 model.require_backward_grad_sync = (micro_step == grad_accum_steps - 1)
         
@@ -533,33 +534,6 @@ def main():
 
     if ddp:
         destroy_process_group()
-    # import sys; sys.exit(0)
-
-    # num_return_sequences = 5
-    # max_length = 30
-    # tokens = enc.encode("Behold, ")
-    # tokens = torch.tensor(tokens, dtype=torch.long)
-    # tokens = tokens.unsqueeze(0).repeat(num_return_sequences, 1)
-    # x = tokens.to(device)
-
-    # torch.manual_seed(42)
-
-    # model.eval()
-    # while x.size(1) < max_length:
-    #       torch.no_grad():
-    #         logits, _ = model(x)
-    #         logits = logits[:, -1, :]
-    #         probs = F.softmax(logits, dim=-1)
-    #         topk_probs, topk_indices = torch.topk(probs, 50, dim=-1)
-    #         ix = torch.multinomial(topk_probs, 1)
-    #         xcol = torch.gather(topk_indices, -1, ix)
-    #         x = torch.cat((x, xcol), dim=1)
-
-
-    # for i in range(num_return_sequences):
-    #     tokens = x[i, :max_length].tolist()
-    #     print(tokens)
-    #     decoded = enc.decode(tokens)
-    #     print(">", decoded)
+    
 if __name__ == "__main__":
     main()
